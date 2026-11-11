@@ -48,3 +48,5 @@ service-account.json
 # firebase
 .firebase/
 firebase-debug.log
+
+!.env.example
