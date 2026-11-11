@@ -1,7 +1,7 @@
 "use client";
 
 import { useLabStore, type ComponentType } from "@/store/useLabStore";
-import { SPECS } from "@/components/bench/Workbench";
+import { SPECS } from "@/components/bench/specs";
 
 const ITEMS: ComponentType[] = ["mcu-8051", "arduino-uno", "esp32", "jetson-nano", "led"];
 
