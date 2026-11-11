@@ -1,6 +1,8 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import {
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, type Firestore,
+} from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
@@ -15,6 +17,18 @@ const firebaseConfig = {
 
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
 export const rtdb = getDatabase(app);
 export const googleProvider = new GoogleAuthProvider();
+
+// Offline persistence: saves made while offline are queued in IndexedDB and synced on reconnect
+function createDb(): Firestore {
+  if (typeof window === "undefined") return getFirestore(app);
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch {
+    return getFirestore(app); // already initialised (hot reload)
+  }
+}
+export const db = createDb();
