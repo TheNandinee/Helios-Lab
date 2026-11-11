@@ -1,12 +1,14 @@
 import { I8051 } from "./core";
+import { simTrace } from "@/sim/trace";
 
-// 12 MHz crystal, 12 clocks per machine cycle, 60 frames per second
-const CYCLES_PER_FRAME = Math.round(12_000_000 / 12 / 60);
+const MACHINE_HZ = 1_000_000; // 12 MHz crystal / 12 clocks per machine cycle
+const CYCLES_PER_FRAME = Math.round(MACHINE_HZ / 60);
 
 export class Runner8051 {
   readonly cpu = new I8051();
   onPins?: (changes: Record<string, number>) => void;
   onHalt?: (message: string) => void;
+  paused = false;
 
   private raf = 0;
   private running = false;
@@ -19,8 +21,14 @@ export class Runner8051 {
       if (old === value) return;
       this.latch[port] = value;
       const diff = old ^ value;
+      const t = this.cpu.cycles / MACHINE_HZ;
       for (let b = 0; b < 8; b++) {
-        if (diff & (1 << b)) this.pending[`P${port}.${b}`] = (value >> b) & 1;
+        if (diff & (1 << b)) {
+          const pin = `P${port}.${b}`;
+          const v = (value >> b) & 1;
+          this.pending[pin] = v;
+          simTrace.record(pin, v, t);
+        }
       }
     };
   }
@@ -30,10 +38,15 @@ export class Runner8051 {
     this.cpu.reset();
     this.cpu.code.set(image);
     this.latch = [0xff, 0xff, 0xff, 0xff];
+    this.paused = false;
 
-    // After reset, every port pin reads 1
     const initial: Record<string, number> = {};
-    for (let p = 0; p < 4; p++) for (let b = 0; b < 8; b++) initial[`P${p}.${b}`] = 1;
+    for (let p = 0; p < 4; p++) {
+      for (let b = 0; b < 8; b++) {
+        initial[`P${p}.${b}`] = 1;
+        simTrace.record(`P${p}.${b}`, 1, 0);
+      }
+    }
     this.onPins?.(initial);
 
     this.running = true;
@@ -45,20 +58,43 @@ export class Runner8051 {
     cancelAnimationFrame(this.raf);
   }
 
-  private loop = () => {
-    if (!this.running) return;
-    const target = this.cpu.cycles + CYCLES_PER_FRAME;
-    while (this.cpu.cycles < target && !this.cpu.halted) this.cpu.step();
+  pause() { if (this.running) this.paused = true; }
+  resume() { if (this.running) this.paused = false; }
 
+  stepOnce() {
+    if (!this.running) return;
+    this.paused = true;
+    this.cpu.step();
+    simTrace.setNow(this.cpu.cycles / MACHINE_HZ);
+    this.flush();
+    if (this.cpu.halted) this.halt();
+  }
+
+  setInput(port: number, bit: number, value: number) {
+    this.cpu.setInput(port, bit, value);
+  }
+
+  private flush() {
     if (Object.keys(this.pending).length) {
       this.onPins?.(this.pending);
       this.pending = {};
     }
-    if (this.cpu.halted) {
-      this.running = false;
-      this.onHalt?.(this.cpu.error ?? "CPU halted");
-      return;
+  }
+
+  private halt() {
+    this.running = false;
+    this.onHalt?.(this.cpu.error ?? "CPU halted");
+  }
+
+  private loop = () => {
+    if (!this.running) return;
+    if (!this.paused) {
+      const target = this.cpu.cycles + CYCLES_PER_FRAME;
+      while (this.cpu.cycles < target && !this.cpu.halted) this.cpu.step();
+      simTrace.setNow(this.cpu.cycles / MACHINE_HZ);
     }
+    this.flush();
+    if (this.cpu.halted) { this.halt(); return; }
     this.raf = requestAnimationFrame(this.loop);
   };
 }

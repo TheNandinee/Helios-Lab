@@ -1,7 +1,6 @@
 import { ref, set, update, onValue } from "firebase/database";
 import { rtdb } from "@/lib/firebase";
 
-// Realtime DB keys cannot contain "." so P1.0 is stored as P1_0
 export const toKey = (pin: string) => pin.replace(/\./g, "_");
 export const fromKey = (key: string) => key.replace(/^P(\d)_(\d)$/, "P$1.$2");
 
@@ -23,7 +22,6 @@ export function createTelemetryPublisher(opts: {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
-  // Reset the stream at the start of every run
   set(streamRef, { owner_uid: ownerUid, project_id: projectId, updated_at: Date.now() }).catch(console.error);
 
   const flush = () => {
@@ -62,5 +60,20 @@ export function subscribeTelemetry(streamId: string, cb: (pins: Record<string, n
       pins[fromKey(k)] = p.value;
     }
     cb(pins);
+  });
+}
+
+// ---- ESP32 device ingest (Wokwi -> Firebase over Wi-Fi) ----
+
+export async function createDeviceKey(uid: string, projectId: string): Promise<string> {
+  const key = crypto.randomUUID().replace(/-/g, "");
+  await set(ref(rtdb, `device_keys/${key}`), { owner_uid: uid, project_id: projectId, created_at: Date.now() });
+  return key;
+}
+
+export function subscribeDevice(key: string, cb: (data: Record<string, number>) => void) {
+  return onValue(ref(rtdb, `device_ingest/${key}`), (snap) => {
+    const v = snap.val();
+    if (v && typeof v === "object") cb(v as Record<string, number>);
   });
 }
