@@ -2,13 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn()  { return request.auth != null; }
-    function role()      { return signedIn() ? request.auth.token.get('role', 'student') : 'guest'; }
-    function isStaff()   { return role() in ['instructor', 'admin']; }
-    function isAdmin()   { return role() == 'admin'; }
-    function isOwner(uid){ return signedIn() && request.auth.uid == uid; }
+    function signedIn()   { return request.auth != null; }
+    function role()       { return signedIn() ? request.auth.token.get('role', 'student') : 'guest'; }
+    function isStaff()    { return role() in ['instructor', 'admin']; }
+    function isAdmin()    { return role() == 'admin'; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function validArch(a) { return a in ['8051', 'arduino-uno', 'esp32', 'jetson-nano']; }
 
-    // User profiles: users can't give themselves a role
+    // Profiles: users can never grant themselves a role
     match /users/{uid} {
       allow read: if isOwner(uid) || isStaff();
       allow create: if isOwner(uid) && !('role' in request.resource.data);
@@ -17,35 +18,55 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Student/instructor projects
+    // Projects: owner + staff; only staff can publish templates
     match /lab_projects/{projectId} {
       allow read: if signedIn() && (
         resource.data.owner_uid == request.auth.uid || isStaff() || resource.data.get('is_template', false) == true
       );
-      allow create: if signedIn() && request.resource.data.owner_uid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.owner_uid == request.auth.uid
+        && validArch(request.resource.data.hardware_architecture)
+        && request.resource.data.source_code is map
+        && (request.resource.data.get('is_template', false) == false || isStaff());
       allow update: if signedIn()
         && (resource.data.owner_uid == request.auth.uid || isStaff())
-        && request.resource.data.owner_uid == resource.data.owner_uid;
+        && request.resource.data.owner_uid == resource.data.owner_uid
+        && validArch(request.resource.data.hardware_architecture)
+        && (request.resource.data.get('is_template', false) == resource.data.get('is_template', false) || isStaff());
       allow delete: if signedIn() && (resource.data.owner_uid == request.auth.uid || isStaff());
     }
 
-    // Public demo labs for guests
+    // Public guest demos
     match /demo_projects/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Lab submissions (student writes own, staff reads/grades all)
+    // Submissions: students create their own as "pending" with no score; only staff (or the
+    // Admin-SDK auto-grader, which bypasses rules) can grade
     match /submissions/{id} {
       allow read: if signedIn() && (resource.data.student_uid == request.auth.uid || isStaff());
-      allow create: if signedIn() && request.resource.data.student_uid == request.auth.uid;
-      allow update, delete: if isStaff();
+      allow create: if signedIn()
+        && request.resource.data.student_uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.score == null;
+      allow update: if isStaff();
+      allow delete: if isAdmin();
     }
 
-    // Auto-grader test suites
     match /test_suites/{id} {
-      allow read: if isStaff();
-      allow write: if isStaff();
+      allow read, write: if isStaff();
+    }
+
+    // Hardware chip catalog (admin-managed)
+    match /chip_catalog/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Everything else is denied
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
