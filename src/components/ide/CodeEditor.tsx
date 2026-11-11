@@ -7,7 +7,7 @@ import { languageFor } from "@/sim/templates";
 import { runSimulation } from "@/sim/controller";
 
 const beforeMount: BeforeMount = (monaco) => {
-  if (!monaco.languages.getLanguages().some((l) => l.id === "asm8051")) {
+  if (!monaco.languages.getLanguages().some((l: { id: string }) => l.id === "asm8051")) {
     monaco.languages.register({ id: "asm8051" });
     monaco.languages.setMonarchTokensProvider("asm8051", {
       ignoreCase: true,
