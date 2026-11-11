@@ -3,13 +3,13 @@
 import { useLabStore, type ComponentType } from "@/store/useLabStore";
 import { SPECS } from "@/components/bench/specs";
 
-const ITEMS: ComponentType[] = ["mcu-8051", "arduino-uno", "esp32", "jetson-nano", "led"];
+const ITEMS: ComponentType[] = ["mcu-8051", "arduino-uno", "esp32", "jetson-nano", "led", "button"];
 
 export default function Palette() {
   const addComponent = useLabStore((s) => s.addComponent);
   const role = useLabStore((s) => s.role);
   return (
-    <div className="glass rounded-xl p-3 space-y-2">
+    <div className="glass space-y-2 rounded-xl p-3">
       <h2 className="text-sm font-semibold text-slate-300">Components</h2>
       {ITEMS.map((t) => (
         <button

@@ -2,6 +2,7 @@ import {
   CPU, avrInstruction, AVRTimer, timer0Config, timer1Config, timer2Config,
   AVRIOPort, portBConfig, portCConfig, portDConfig, AVRUSART, usart0Config, PinState,
 } from "avr8js";
+import { simTrace } from "@/sim/trace";
 
 const FREQ_HZ = 16_000_000;
 const CYCLES_PER_FRAME = FREQ_HZ / 60;
@@ -23,6 +24,7 @@ export class AvrRunner {
   onSerial?: (text: string) => void;
 
   private cpu: CPU | null = null;
+  private ports: { b: AVRIOPort; c: AVRIOPort; d: AVRIOPort } | null = null;
   private raf = 0;
   private running = false;
   private pending: Record<string, number> = {};
@@ -38,26 +40,35 @@ export class AvrRunner {
     new AVRTimer(cpu, timer1Config);
     new AVRTimer(cpu, timer2Config);
 
-    // Arduino Uno mapping: PORTD = D0–D7, PORTB = D8–D13, PORTC = A0–A5
+    const d = new AVRIOPort(cpu, portDConfig);
+    const b = new AVRIOPort(cpu, portBConfig);
+    const c = new AVRIOPort(cpu, portCConfig);
     const banks: { port: AVRIOPort; name: (i: number) => string; count: number }[] = [
-      { port: new AVRIOPort(cpu, portDConfig), name: (i) => `D${i}`, count: 8 },
-      { port: new AVRIOPort(cpu, portBConfig), name: (i) => `D${i + 8}`, count: 6 },
-      { port: new AVRIOPort(cpu, portCConfig), name: (i) => `A${i}`, count: 6 },
+      { port: d, name: (i) => `D${i}`, count: 8 },
+      { port: b, name: (i) => `D${i + 8}`, count: 6 },
+      { port: c, name: (i) => `A${i}`, count: 6 },
     ];
     for (const { port, name, count } of banks) {
       const last = new Array<number>(count).fill(-1);
       port.addListener(() => {
         for (let i = 0; i < count; i++) {
-          const v = port.pinState(i) === PinState.High ? 1 : 0;
-          if (v !== last[i]) { last[i] = v; this.pending[name(i)] = v; }
+          const st = port.pinState(i);
+          if (st === PinState.Input || st === PinState.InputPullUp) continue; // inputs are reported by the controller
+          const v = st === PinState.High ? 1 : 0;
+          if (v !== last[i]) {
+            last[i] = v;
+            this.pending[name(i)] = v;
+            simTrace.record(name(i), v, cpu.cycles / FREQ_HZ);
+          }
         }
       });
     }
 
     const usart = new AVRUSART(cpu, usart0Config, FREQ_HZ);
-    usart.onByteTransmit = (b: number) => { this.serialBuf += String.fromCharCode(b); };
+    usart.onByteTransmit = (byte: number) => { this.serialBuf += String.fromCharCode(byte); };
 
     this.cpu = cpu;
+    this.ports = { b, c, d };
     this.running = true;
     this.raf = requestAnimationFrame(this.loop);
   }
@@ -65,6 +76,16 @@ export class AvrRunner {
   stop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
+  }
+
+  /** Drive an input pin from outside (buttons). high = true means 5 V */
+  setInput(pin: string, high: boolean) {
+    const m = /^([DA])(\d+)$/.exec(pin);
+    if (!m || !this.ports) return;
+    const n = Number(m[2]);
+    if (m[1] === "A") this.ports.c.setPin(n, high);
+    else if (n < 8) this.ports.d.setPin(n, high);
+    else this.ports.b.setPin(n - 8, high);
   }
 
   private loop = () => {
@@ -75,6 +96,7 @@ export class AvrRunner {
       avrInstruction(cpu);
       cpu.tick();
     }
+    simTrace.setNow(cpu.cycles / FREQ_HZ);
     if (Object.keys(this.pending).length) { this.onPins?.(this.pending); this.pending = {}; }
     if (this.serialBuf) { this.onSerial?.(this.serialBuf); this.serialBuf = ""; }
     this.raf = requestAnimationFrame(this.loop);

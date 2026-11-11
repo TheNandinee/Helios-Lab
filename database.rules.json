@@ -5,6 +5,35 @@
         ".read": "auth != null",
         ".write": "auth != null && (!data.exists() || data.child('owner_uid').val() === auth.uid) && newData.child('owner_uid').val() === auth.uid"
       }
+    },
+    "device_keys": {
+      "$key": {
+        ".read": "auth != null && data.child('owner_uid').val() === auth.uid",
+        ".write": "auth != null && (!data.exists() || data.child('owner_uid').val() === auth.uid) && (!newData.exists() || newData.child('owner_uid').val() === auth.uid)"
+      }
+    },
+    "device_ingest": {
+      "$key": {
+        ".read": "auth != null && root.child('device_keys').child($key).child('owner_uid').val() === auth.uid",
+        ".write": "root.child('device_keys').child($key).exists()",
+        "$field": { ".validate": "newData.isNumber()" }
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null && (data.child('owner_uid').val() === auth.uid || data.child('members').child(auth.uid).exists() || auth.token.role === 'admin')",
+        "owner_uid": {
+          ".write": "auth != null && !data.exists() && newData.val() === auth.uid && (auth.token.role === 'instructor' || auth.token.role === 'admin')"
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($roomId).child('owner_uid').exists()"
+          }
+        },
+        "$other": {
+          ".write": "auth != null && newData.parent().child('owner_uid').val() === auth.uid"
+        }
+      }
     }
   }
 }

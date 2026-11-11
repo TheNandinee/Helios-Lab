@@ -1,12 +1,13 @@
 "use client";
 
-import Editor, { type BeforeMount } from "@monaco-editor/react";
+import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useShallow } from "zustand/react/shallow";
 import { useLabStore } from "@/store/useLabStore";
 import { languageFor } from "@/sim/templates";
+import { runSimulation } from "@/sim/controller";
 
 const beforeMount: BeforeMount = (monaco) => {
-  if (!monaco.languages.getLanguages().some((l: { id: string }) => l.id === "asm8051")) {
+  if (!monaco.languages.getLanguages().some((l) => l.id === "asm8051")) {
     monaco.languages.register({ id: "asm8051" });
     monaco.languages.setMonarchTokensProvider("asm8051", {
       ignoreCase: true,
@@ -17,7 +18,7 @@ const beforeMount: BeforeMount = (monaco) => {
           [/\b(MOV|MOVC|MOVX|ADD|ADDC|SUBB|INC|DEC|MUL|DIV|DA|ANL|ORL|XRL|CLR|CPL|RL|RLC|RR|RRC|SWAP|XCH|XCHD|PUSH|POP|SETB|JC|JNC|JB|JNB|JBC|ACALL|LCALL|CALL|RET|RETI|AJMP|LJMP|SJMP|JMP|JZ|JNZ|CJNE|DJNZ|NOP)\b/, "keyword"],
           [/\b(ORG|EQU|BIT|SET|DB|DW|END)\b/, "keyword.directive"],
           [/[@]R[01]|[@]A\+DPTR|[@]A\+PC/, "variable.predefined"],
-          [/\b(A|B|C|AB|DPTR|R[0-7]|ACC|PSW|SP|DPL|DPH|P[0-3]|TMOD|TCON|TH[01]|TL[01]|IE|IP|SCON|SBUF|PCON)\b/, "variable.predefined"],
+          [/\b(A|B|C|AB|DPTR|R[0-7]|ACC|PSW|SP|DPL|DPH|P[0-3]|TMOD|TCON|TH[01]|TL[01]|IE|IP|SCON|SBUF|PCON|EA|ET0|ET1|EX0|EX1|TR0|TR1|TF0|TF1)\b/, "variable.predefined"],
           [/#?(0x[0-9a-f]+|[0-9][0-9a-f]*h|[01]+b|\d+)\b/, "number"],
           [/'[^']*'|"[^"]*"/, "string"],
         ],
@@ -39,6 +40,10 @@ const beforeMount: BeforeMount = (monaco) => {
   });
 };
 
+const onMount: OnMount = (editor, monaco) => {
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { runSimulation(); });
+};
+
 export default function CodeEditor() {
   const { files, activeFile, setFile, setActiveFile } = useLabStore(
     useShallow((s) => ({ files: s.files, activeFile: s.activeFile, setFile: s.setFile, setActiveFile: s.setActiveFile }))
@@ -46,7 +51,7 @@ export default function CodeEditor() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex gap-1 border-b border-slate-800 bg-slate-900/60 px-2 pt-1">
+      <div className="flex items-center gap-1 border-b border-slate-800 bg-slate-900/60 px-2 pt-1">
         {Object.keys(files).map((name) => (
           <button
             key={name}
@@ -56,6 +61,7 @@ export default function CodeEditor() {
             {name}
           </button>
         ))}
+        <span className="ml-auto pb-1 text-[10px] text-slate-500">⌘/Ctrl + Enter to run</span>
       </div>
       <div className="flex-1">
         <Editor
@@ -64,6 +70,7 @@ export default function CodeEditor() {
           value={files[activeFile] ?? ""}
           theme="helios-dark"
           beforeMount={beforeMount}
+          onMount={onMount}
           onChange={(v) => setFile(activeFile, v ?? "")}
           options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false, tabSize: 2 }}
         />

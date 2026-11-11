@@ -1,11 +1,13 @@
 import { create } from "zustand";
-import { MAIN_FILE, TEMPLATES, DEFAULT_LED_PIN, PIN_OPTIONS } from "@/sim/templates";
+import { MAIN_FILE, TEMPLATES, DEFAULT_LED_PIN, DEFAULT_BUTTON_PIN, PIN_OPTIONS } from "@/sim/templates";
+import type { JetsonConfig } from "@/sim/jetson";
 
 export type Role = "guest" | "student" | "instructor" | "admin";
 export type Architecture = "8051" | "arduino-uno" | "esp32" | "jetson-nano";
 export type ComponentType =
-  | "mcu-8051" | "arduino-uno" | "esp32" | "jetson-nano" | "led" | "oscilloscope";
-export type SimStatus = "idle" | "compiling" | "running" | "error";
+  | "mcu-8051" | "arduino-uno" | "esp32" | "jetson-nano" | "led" | "button" | "oscilloscope";
+export type SimStatus = "idle" | "compiling" | "running" | "paused" | "error";
+export type ViewMode = "3d" | "2d";
 
 export interface BenchComponent {
   id: string;
@@ -16,26 +18,25 @@ export interface BenchComponent {
   activeLow?: boolean;
 }
 
-export interface LabUser {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-}
+export interface LabUser { uid: string; email: string | null; displayName: string | null; }
 
 export interface ProjectSnapshot {
-  id: string;
+  id: string | null;
   name: string;
   architecture: Architecture;
   components: BenchComponent[];
   files: Record<string, string>;
 }
 
+export interface JetsonStats { fps: number; inferenceMs: number; detections: number; }
+export interface RoomInfo { id: string; isHost: boolean; }
+export interface CameraPose { p: [number, number, number]; t: [number, number, number]; }
+
 interface LabState {
-  // auth
   user: LabUser | null;
   role: Role;
   authReady: boolean;
-  // project
+
   projectId: string | null;
   projectName: string;
   architecture: Architecture;
@@ -43,7 +44,7 @@ interface LabState {
   selectedId: string | null;
   files: Record<string, string>;
   activeFile: string;
-  // simulation + telemetry
+
   simStatus: SimStatus;
   simError: string | null;
   buildMs: number | null;
@@ -51,6 +52,19 @@ interface LabState {
   pinStates: Record<string, number>;
   remotePins: Record<string, number>;
   telemetryLatency: number | null;
+
+  autoFlash: boolean;
+  scopeOpen: boolean;
+  registersOpen: boolean;
+  viewMode: ViewMode;
+  fallbackReason: string | null;
+  online: boolean;
+  jetsonConfig: JetsonConfig | null;
+  jetsonStats: JetsonStats | null;
+  sensorMetrics: Record<string, number>;
+  room: RoomInfo | null;
+  followHost: boolean;
+  remoteCamera: CameraPose | null;
 
   setAuth: (user: LabUser | null, role: Role) => void;
   setArchitecture: (a: Architecture) => void;
@@ -72,6 +86,18 @@ interface LabState {
   resetPins: () => void;
   setRemotePins: (pins: Record<string, number>) => void;
   setTelemetryLatency: (ms: number | null) => void;
+  setAutoFlash: (v: boolean) => void;
+  setScopeOpen: (v: boolean) => void;
+  setRegistersOpen: (v: boolean) => void;
+  setViewMode: (mode: ViewMode, reason?: string | null) => void;
+  setOnline: (v: boolean) => void;
+  setJetsonConfig: (c: JetsonConfig | null) => void;
+  setJetsonStats: (s: JetsonStats | null) => void;
+  setSensorMetrics: (m: Record<string, number>) => void;
+  setRoom: (r: RoomInfo | null) => void;
+  setFollowHost: (v: boolean) => void;
+  setRemoteCamera: (c: CameraPose | null) => void;
+  applyRemoteBench: (architecture: Architecture, components: BenchComponent[]) => void;
 }
 
 const SERIAL_MAX = 8000;
@@ -81,6 +107,20 @@ const initialComponents = (): BenchComponent[] => [
   { id: "uno-1", type: "arduino-uno", position: [-0.6, 0, 0.1] },
   { id: "led-1", type: "led", position: [0.4, 0, 0.1], pin: "D13", color: "#ef4444" },
 ];
+
+function remapPins(components: BenchComponent[], architecture: Architecture): BenchComponent[] {
+  const valid = PIN_OPTIONS[architecture];
+  return components.map((c) => {
+    if (c.type === "led" && (!c.pin || !valid.includes(c.pin))) return { ...c, pin: DEFAULT_LED_PIN[architecture] };
+    if (c.type === "button" && (!c.pin || !valid.includes(c.pin))) return { ...c, pin: DEFAULT_BUTTON_PIN[architecture] };
+    return c;
+  });
+}
+
+function withMainFile(files: Record<string, string>, architecture: Architecture) {
+  const main = MAIN_FILE[architecture];
+  return main in files ? files : { ...files, [main]: TEMPLATES[architecture] };
+}
 
 export const useLabStore = create<LabState>((set) => ({
   user: null,
@@ -103,27 +143,39 @@ export const useLabStore = create<LabState>((set) => ({
   remotePins: {},
   telemetryLatency: null,
 
+  autoFlash: true,
+  scopeOpen: false,
+  registersOpen: false,
+  viewMode: "3d",
+  fallbackReason: null,
+  online: true,
+  jetsonConfig: null,
+  jetsonStats: null,
+  sensorMetrics: {},
+  room: null,
+  followHost: true,
+  remoteCamera: null,
+
   setAuth: (user, role) => set({ user, role, authReady: true }),
 
   setArchitecture: (architecture) =>
-    set((s) => {
-      const main = MAIN_FILE[architecture];
-      const files = main in s.files ? s.files : { ...s.files, [main]: TEMPLATES[architecture] };
-      const valid = PIN_OPTIONS[architecture];
-      const components = s.components.map((c) =>
-        c.type === "led" && (!c.pin || !valid.includes(c.pin))
-          ? { ...c, pin: DEFAULT_LED_PIN[architecture] }
-          : c
-      );
-      return { architecture, files, activeFile: main, components, pinStates: {} };
-    }),
+    set((s) => ({
+      architecture,
+      files: withMainFile(s.files, architecture),
+      activeFile: MAIN_FILE[architecture],
+      components: remapPins(s.components, architecture),
+      pinStates: {},
+    })),
 
   addComponent: (type) =>
     set((s) => {
       const n = s.components.length;
       const x = -1.2 + (n % 4) * 0.9;
       const z = 0.1 + Math.floor(n / 4) * 0.7;
-      const extra = type === "led" ? { pin: DEFAULT_LED_PIN[s.architecture], color: "#ef4444" } : {};
+      const extra =
+        type === "led" ? { pin: DEFAULT_LED_PIN[s.architecture], color: "#ef4444" }
+        : type === "button" ? { pin: DEFAULT_BUTTON_PIN[s.architecture] }
+        : {};
       return {
         components: [
           ...s.components,
@@ -142,10 +194,8 @@ export const useLabStore = create<LabState>((set) => ({
     })),
 
   select: (selectedId) => set({ selectedId }),
-
   setFile: (name, content) => set((s) => ({ files: { ...s.files, [name]: content } })),
   setActiveFile: (activeFile) => set({ activeFile }),
-
   setProjectMeta: (projectId, projectName) => set({ projectId, projectName }),
   setProjectName: (projectName) => set({ projectName }),
 
@@ -155,10 +205,8 @@ export const useLabStore = create<LabState>((set) => ({
       projectName: p.name,
       architecture: p.architecture,
       components: p.components,
-      files: p.files,
-      activeFile: MAIN_FILE[p.architecture] in p.files
-        ? MAIN_FILE[p.architecture]
-        : Object.keys(p.files)[0] ?? MAIN_FILE[p.architecture],
+      files: withMainFile(p.files, p.architecture),
+      activeFile: MAIN_FILE[p.architecture],
       selectedId: null,
       pinStates: {},
       serial: "",
@@ -189,4 +237,22 @@ export const useLabStore = create<LabState>((set) => ({
   resetPins: () => set({ pinStates: {} }),
   setRemotePins: (remotePins) => set({ remotePins }),
   setTelemetryLatency: (telemetryLatency) => set({ telemetryLatency }),
+  setAutoFlash: (autoFlash) => set({ autoFlash }),
+  setScopeOpen: (scopeOpen) => set({ scopeOpen }),
+  setRegistersOpen: (registersOpen) => set({ registersOpen }),
+  setViewMode: (viewMode, fallbackReason = null) => set({ viewMode, fallbackReason }),
+  setOnline: (online) => set({ online }),
+  setJetsonConfig: (jetsonConfig) => set({ jetsonConfig }),
+  setJetsonStats: (jetsonStats) => set({ jetsonStats }),
+  setSensorMetrics: (sensorMetrics) => set({ sensorMetrics }),
+  setRoom: (room) => set({ room }),
+  setFollowHost: (followHost) => set({ followHost }),
+  setRemoteCamera: (remoteCamera) => set({ remoteCamera }),
+  applyRemoteBench: (architecture, components) =>
+    set((s) => ({
+      architecture,
+      components,
+      files: withMainFile(s.files, architecture),
+      activeFile: MAIN_FILE[architecture],
+    })),
 }));

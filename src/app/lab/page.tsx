@@ -8,14 +8,17 @@ import { useShallow } from "zustand/react/shallow";
 import { auth } from "@/lib/firebase";
 import { useLabStore } from "@/store/useLabStore";
 import { subscribeTelemetry } from "@/lib/telemetry";
-import { stopSimulation } from "@/sim/controller";
+import { initAutoFlash, stopSimulation } from "@/sim/controller";
+import { cloudTrace } from "@/sim/trace";
 import Palette from "@/components/ui/Palette";
 import ComponentConfigModal from "@/components/ui/ComponentConfigModal";
 import TelemetryHud from "@/components/ui/TelemetryHud";
 import ProjectBar from "@/components/ide/ProjectBar";
 import SimToolbar from "@/components/ide/SimToolbar";
 import SerialConsole from "@/components/ide/SerialConsole";
-import WokwiPanel from "@/components/sim/WokwiPanel";
+import Oscilloscope from "@/components/scope/Oscilloscope";
+import JetsonView from "@/components/jetson/JetsonView";
+import Esp32Panel from "@/components/sim/Esp32Panel";
 
 const Workbench = dynamic(() => import("@/components/bench/Workbench"), {
   ssr: false,
@@ -33,14 +36,19 @@ export default function LabPage() {
     }))
   );
 
-  // Stop the simulation when leaving the page
   useEffect(() => () => stopSimulation(), []);
+  useEffect(() => initAutoFlash(), []);
 
-  // Listen to this project's cloud telemetry stream
   useEffect(() => {
     if (!user) return;
     const streamId = projectId ?? `scratch_${user.uid}`;
-    return subscribeTelemetry(streamId, (pins) => useLabStore.getState().setRemotePins(pins));
+    let prev: Record<string, number> = {};
+    return subscribeTelemetry(streamId, (pins) => {
+      const now = performance.now() / 1000;
+      for (const [pin, v] of Object.entries(pins)) if (prev[pin] !== v) cloudTrace.record(pin, v, now);
+      prev = pins;
+      useLabStore.getState().setRemotePins(pins);
+    });
   }, [user, projectId]);
 
   if (!authReady) {
@@ -76,7 +84,9 @@ export default function LabPage() {
           <Workbench />
           <div className="absolute left-3 top-3"><Palette /></div>
           <div className="absolute right-3 top-3"><ComponentConfigModal /></div>
+          <div className="absolute left-1/2 top-3 -translate-x-1/2"><JetsonView /></div>
           <div className="absolute bottom-3 left-3"><TelemetryHud /></div>
+          <div className="absolute bottom-3 right-3"><Oscilloscope /></div>
         </section>
 
         <aside className="flex min-h-0 flex-col gap-2 overflow-auto border-l border-slate-800 p-3">
@@ -85,11 +95,7 @@ export default function LabPage() {
           <div className="min-h-[260px] flex-1 overflow-hidden rounded-xl border border-slate-800">
             <CodeEditor />
           </div>
-          {architecture === "esp32" ? (
-            <div className="h-[360px]"><WokwiPanel /></div>
-          ) : (
-            <SerialConsole />
-          )}
+          {architecture === "esp32" ? <Esp32Panel key={projectId ?? "scratch"} /> : <SerialConsole />}
         </aside>
       </div>
     </div>
