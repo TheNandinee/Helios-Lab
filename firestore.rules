@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn()  { return request.auth != null; }
+    function role()      { return signedIn() ? request.auth.token.get('role', 'student') : 'guest'; }
+    function isStaff()   { return role() in ['instructor', 'admin']; }
+    function isAdmin()   { return role() == 'admin'; }
+    function isOwner(uid){ return signedIn() && request.auth.uid == uid; }
+
+    // User profiles: users can't give themselves a role
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isStaff();
+      allow create: if isOwner(uid) && !('role' in request.resource.data);
+      allow update: if isOwner(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+      allow delete: if isAdmin();
+    }
+
+    // Student/instructor projects
+    match /lab_projects/{projectId} {
+      allow read: if signedIn() && (
+        resource.data.owner_uid == request.auth.uid || isStaff() || resource.data.get('is_template', false) == true
+      );
+      allow create: if signedIn() && request.resource.data.owner_uid == request.auth.uid;
+      allow update: if signedIn()
+        && (resource.data.owner_uid == request.auth.uid || isStaff())
+        && request.resource.data.owner_uid == resource.data.owner_uid;
+      allow delete: if signedIn() && (resource.data.owner_uid == request.auth.uid || isStaff());
+    }
+
+    // Public demo labs for guests
+    match /demo_projects/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Lab submissions (student writes own, staff reads/grades all)
+    match /submissions/{id} {
+      allow read: if signedIn() && (resource.data.student_uid == request.auth.uid || isStaff());
+      allow create: if signedIn() && request.resource.data.student_uid == request.auth.uid;
+      allow update, delete: if isStaff();
+    }
+
+    // Auto-grader test suites
+    match /test_suites/{id} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+  }
+}

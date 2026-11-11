@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "telemetry_streams": {
+      "$streamId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('owner_uid').val() === auth.uid) && newData.child('owner_uid').val() === auth.uid"
+      }
+    }
+  }
+}
