@@ -26,13 +26,14 @@ export function useDraftAutosave() {
       timer = null;
       const s = useLabStore.getState();
       const draft: ProjectSnapshot = {
-        id: s.projectId, name: s.projectName, architecture: s.architecture, components: s.components, files: s.files,
+        id: s.projectId, name: s.projectName, architecture: s.architecture,
+        components: s.components, wires: s.wires, files: s.files,
       };
       try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* storage full or private mode */ }
     };
     const unsub = useLabStore.subscribe((s, p) => {
-      if (s.files === p.files && s.components === p.components && s.architecture === p.architecture &&
-          s.projectName === p.projectName && s.projectId === p.projectId) return;
+      if (s.files === p.files && s.components === p.components && s.wires === p.wires &&
+          s.architecture === p.architecture && s.projectName === p.projectName && s.projectId === p.projectId) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(save, 800);
     });
