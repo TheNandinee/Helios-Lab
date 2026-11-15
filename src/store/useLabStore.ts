@@ -18,6 +18,16 @@ export interface BenchComponent {
   activeLow?: boolean;
 }
 
+export interface WireConnection {
+  from: string;
+  to: string;
+  color: string;
+  /** Optional flat x/y coordinate list for Helios routing metadata. */
+  points?: number[];
+  /** Optional Wokwi wire-placement instructions (e.g. v10, h5, *). */
+  route?: string[];
+}
+
 export interface LabUser { uid: string; email: string | null; displayName: string | null; }
 
 export interface ProjectSnapshot {
@@ -25,6 +35,7 @@ export interface ProjectSnapshot {
   name: string;
   architecture: Architecture;
   components: BenchComponent[];
+  wires?: WireConnection[];
   files: Record<string, string>;
 }
 
@@ -41,6 +52,7 @@ interface LabState {
   projectName: string;
   architecture: Architecture;
   components: BenchComponent[];
+  wires: WireConnection[];
   selectedId: string | null;
   files: Record<string, string>;
   activeFile: string;
@@ -71,6 +83,9 @@ interface LabState {
   addComponent: (type: ComponentType) => void;
   updateComponent: (id: string, patch: Partial<BenchComponent>) => void;
   removeComponent: (id: string) => void;
+  setWires: (wires: WireConnection[]) => void;
+  addWire: (wire: WireConnection) => void;
+  removeWire: (index: number) => void;
   select: (id: string | null) => void;
   setFile: (name: string, content: string) => void;
   setActiveFile: (name: string) => void;
@@ -131,6 +146,7 @@ export const useLabStore = create<LabState>((set) => ({
   projectName: "Untitled lab",
   architecture: "arduino-uno",
   components: initialComponents(),
+  wires: [],
   selectedId: null,
   files: { [MAIN_FILE["arduino-uno"]]: TEMPLATES["arduino-uno"] },
   activeFile: MAIN_FILE["arduino-uno"],
@@ -164,6 +180,7 @@ export const useLabStore = create<LabState>((set) => ({
       files: withMainFile(s.files, architecture),
       activeFile: MAIN_FILE[architecture],
       components: remapPins(s.components, architecture),
+      wires: [],
       pinStates: {},
     })),
 
@@ -191,7 +208,12 @@ export const useLabStore = create<LabState>((set) => ({
     set((s) => ({
       components: s.components.filter((c) => c.id !== id),
       selectedId: s.selectedId === id ? null : s.selectedId,
+      wires: s.wires.filter((wire) => !wire.from.startsWith(`${id}:`) && !wire.to.startsWith(`${id}:`)),
     })),
+
+  setWires: (wires) => set({ wires: wires.map((wire) => ({ ...wire, points: wire.points ? [...wire.points] : undefined, route: wire.route ? [...wire.route] : undefined })) }),
+  addWire: (wire) => set((s) => ({ wires: [...s.wires, wire] })),
+  removeWire: (index) => set((s) => ({ wires: s.wires.filter((_, i) => i !== index) })),
 
   select: (selectedId) => set({ selectedId }),
   setFile: (name, content) => set((s) => ({ files: { ...s.files, [name]: content } })),
@@ -205,6 +227,7 @@ export const useLabStore = create<LabState>((set) => ({
       projectName: p.name,
       architecture: p.architecture,
       components: p.components,
+      wires: p.wires ?? [],
       files: withMainFile(p.files, p.architecture),
       activeFile: MAIN_FILE[p.architecture],
       selectedId: null,
@@ -220,6 +243,7 @@ export const useLabStore = create<LabState>((set) => ({
       projectName: "Untitled lab",
       architecture: "arduino-uno",
       components: initialComponents(),
+      wires: [],
       files: { [MAIN_FILE["arduino-uno"]]: TEMPLATES["arduino-uno"] },
       activeFile: MAIN_FILE["arduino-uno"],
       selectedId: null,

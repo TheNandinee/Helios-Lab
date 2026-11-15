@@ -1,0 +1,36 @@
+{
+  "arduino-uno": {
+    "name": "Arduino Uno Blink",
+    "compile_points": 40,
+    "checks": [
+      { "id": "pin-mode-13", "label": "Configures pin 13 as output", "contains": "pinMode(13, OUTPUT)", "points": 20 },
+      { "id": "led-high", "label": "Turns the LED on", "contains": "digitalWrite(13, HIGH)", "points": 20 },
+      { "id": "led-low", "label": "Turns the LED off", "contains": "digitalWrite(13, LOW)", "points": 20 }
+    ]
+  },
+  "8051": {
+    "name": "8051 P1.0 LED Blink",
+    "compile_points": 40,
+    "checks": [
+      { "id": "toggle-led", "label": "Toggles the LED output bit", "contains": "CPL LED", "points": 30 },
+      { "id": "repeat-loop", "label": "Repeats the blink loop", "contains": "SJMP START", "points": 30 }
+    ]
+  },
+  "esp32": {
+    "name": "ESP32 Sensor and LED Telemetry",
+    "compile_points": 40,
+    "checks": [
+      { "id": "read-adc", "label": "Reads the sensor ADC pin", "contains": "analogRead(34)", "points": 20 },
+      { "id": "drive-led", "label": "Controls the LED on GPIO 2", "contains": "digitalWrite(2,", "points": 20 },
+      { "id": "http-upload", "label": "Sends telemetry through HTTP", "contains": "http.PUT(", "points": 20 }
+    ]
+  },
+  "jetson-nano": {
+    "name": "Jetson Nano Object Detection Configuration",
+    "compile_points": 40,
+    "checks": [
+      { "id": "detection-network", "label": "Creates an object detection network", "contains": "jetson_inference.detectNet(", "points": 30 },
+      { "id": "run-inference", "label": "Runs inference on captured frames", "contains": "net.Detect(img)", "points": 30 }
+    ]
+  }
+}

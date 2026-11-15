@@ -50,3 +50,15 @@ service-account.json
 firebase-debug.log
 
 !.env.example
+
+# Nested dependencies
+**/node_modules/
+
+# Playwright generated files
+/test-results/
+/playwright-report/
+# Firestore emulator logs
+firestore-debug.log
+
+# Compiled Firebase Functions output
+/functions/lib/
