@@ -11,7 +11,7 @@ const db = getFirestore();
 const ALLOWED_ARCHITECTURES = new Set<Architecture>(["8051", "arduino-uno", "esp32", "jetson-nano"]);
 const STALE_GRADING_LEASE_MS = 15 * 60 * 1000;
 
-setGlobalOptions({ region: "asia-south2", maxInstances: 5 });
+setGlobalOptions({ region: "asia-south1", maxInstances: 5 });
 
 function isArchitecture(value: unknown): value is Architecture {
   return typeof value === "string" && ALLOWED_ARCHITECTURES.has(value as Architecture);
@@ -29,7 +29,7 @@ function fallbackSuite(architecture: Architecture): GradingSuite {
 export const gradeNewSubmission = onDocumentCreated(
   {
     document: "submissions/{submissionId}",
-    region: "asia-south2",
+    region: "asia-south1",
     timeoutSeconds: 120,
     memory: "512MiB",
     maxInstances: 5,
