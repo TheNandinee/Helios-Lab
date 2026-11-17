@@ -1,5 +1,5 @@
 "use client";
-import { Cpu, Zap, Monitor, Circle, ToggleLeft, CircuitBoard } from 'lucide-react';
+import { Cpu, Circle, ToggleLeft, CircuitBoard } from 'lucide-react';
 import { useLabStore, type ComponentType } from "@/store/useLabStore";
 import { SPECS } from "@/components/bench/specs";
 

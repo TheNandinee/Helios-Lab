@@ -19,7 +19,8 @@ function BenchItem({ item }: { item: BenchComponent }) {
   const holding = useRef(false);
 
   // 1. Load the 3D model based on the item type
-  const { scene } = useGLTF(`/models/${item.type}.glb`);
+   const modelName = item.type === "mcu-8051" ? "8051" : item.type;
+  const { scene } = useGLTF(`/models/${modelName}.glb`);
 
   const isLed = item.type === "led";
   const isButton = item.type === "button";
@@ -61,7 +62,7 @@ function BenchItem({ item }: { item: BenchComponent }) {
     >
       {/* 2. Render model with Level of Detail (LOD) */}
       <Detailed distances={[0, 8, 15]}>
-        {/* High & Medium Poly: Actual Model with Color Tint */}
+        {/* High Poly: Asli Model */}
         <group scale={[spec.size[0], spec.size[1], spec.size[2]]}>
           <primitive object={scene.clone()}>
             <meshStandardMaterial 
@@ -72,15 +73,14 @@ function BenchItem({ item }: { item: BenchComponent }) {
           </primitive>
         </group>
         
+        {/* Medium Poly: Thoda simple box (taaki GPU bache) */}
         <group scale={[spec.size[0], spec.size[1], spec.size[2]]}>
-          <primitive object={scene.clone()}>
-            <meshStandardMaterial 
-              color={isLed ? ledColor : spec.color} 
-              emissive={emissive}
-              emissiveIntensity={emissiveIntensity}
-            />
-          </primitive>
+          <mesh>
+            <boxGeometry />
+            <meshStandardMaterial color={spec.color} transparent opacity={0.8} />
+          </mesh>
         </group>
+
         {/* Low Poly: Simple Box for distance */}
         <mesh scale={[spec.size[0], spec.size[1], spec.size[2]]}>
           <boxGeometry />
