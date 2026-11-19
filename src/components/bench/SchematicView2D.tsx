@@ -64,14 +64,32 @@ export default function SchematicView2D() {
           const pressed = c.type === "button" && value === 0;
           ctx.beginPath();
           ctx.arc(x, y, 10, 0, Math.PI * 2);
-          ctx.fillStyle = c.type === "led" ? (on ? (c.color ?? "#ef4444") : "#3f1d1d") : pressed ? "#94a3b8" : "#475569";
+          ctx.fillStyle = c.type === "led" ? (on ? (c.color ?? "#ef4444") : "#3f1d1d") : pressed ? "#22c55e" : "#475569";
           ctx.shadowColor = c.color ?? "#ef4444";
           ctx.shadowBlur = on ? 24 : 0;
           ctx.fill();
           ctx.shadowBlur = 0;
-        } else {
-          ctx.fillStyle = spec.color;
+        }  else {
+          // Draw actual 2D IC Symbol for boards
+          ctx.fillStyle = "#1e293b"; // Dark grey board
           ctx.fillRect(x - pw / 2, y - ph / 2, pw, ph);
+          ctx.strokeStyle = "#64748b";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x - pw / 2, y - ph / 2, pw, ph);
+          
+          // Draw Pins (lines on sides)
+          ctx.beginPath();
+          for(let i = 1; i < 5; i++) {
+            const py = y - ph/2 + (ph/5)*i;
+            ctx.moveTo(x - pw/2, py); ctx.lineTo(x - pw/2 - 4, py); // Left pins
+            ctx.moveTo(x + pw/2, py); ctx.lineTo(x + pw/2 + 4, py); // Right pins
+          }
+          ctx.stroke();
+          
+          // Text inside the chip
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "8px monospace";
+          ctx.fillText("IC", x, y + 3);
         }
         ctx.strokeStyle = selected ? "#38bdf8" : "#94a3b8";
         ctx.lineWidth = selected ? 3 : 1;
