@@ -1,8 +1,7 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { OrbitControls, ContactShadows, PerformanceMonitor, Html } from "@react-three/drei";
+import { OrbitControls, ContactShadows, PerformanceMonitor, Html, useGLTF, Detailed } from "@react-three/drei";
 import type { Vector3 } from "three";
 import { useLabStore, type BenchComponent } from "@/store/useLabStore";
 import { SPECS, BOARD_ARCH } from "@/components/bench/specs";
@@ -18,6 +17,10 @@ function BenchItem({ item }: { item: BenchComponent }) {
   const select = useLabStore((s) => s.select);
   const [hovered, setHovered] = useState(false);
   const holding = useRef(false);
+
+  // 1. Load the 3D model based on the item type
+   const modelName = item.type === "mcu-8051" ? "8051" : item.type;
+  const { scene } = useGLTF(`/models/${modelName}.glb`);
 
   const isLed = item.type === "led";
   const isButton = item.type === "button";
@@ -35,10 +38,9 @@ function BenchItem({ item }: { item: BenchComponent }) {
   };
 
   return (
-    <mesh
+    <group
       position={[item.position[0], height / 2, item.position[2]]}
       scale={[1, pressed ? 0.5 : 1, 1]}
-      castShadow
       onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); select(item.id); }}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
         if (!isButton || !item.pin) return;
@@ -58,13 +60,38 @@ function BenchItem({ item }: { item: BenchComponent }) {
         release();
       }}
     >
-      <boxGeometry args={spec.size} />
-      <meshStandardMaterial
-        color={isLed ? ledColor : spec.color}
-        emissive={emissive}
-        emissiveIntensity={emissiveIntensity}
-      />
-      {isLed && <pointLight color={ledColor} intensity={ledOn ? 1.5 : 0} distance={0.9} position={[0, 0.15, 0]} />}
+      {/* 2. Render model with Level of Detail (LOD) */}
+      <Detailed distances={[0, 8, 15]}>
+        {/* High Poly: Asli Model */}
+        <group scale={[spec.size[0], spec.size[1], spec.size[2]]}>
+          <primitive object={scene.clone()}>
+            <meshStandardMaterial 
+              color={isLed ? ledColor : spec.color} 
+              emissive={emissive}
+              emissiveIntensity={emissiveIntensity}
+            />
+          </primitive>
+        </group>
+        
+        {/* Medium Poly: Thoda simple box (taaki GPU bache) */}
+        <group scale={[spec.size[0], spec.size[1], spec.size[2]]}>
+          <mesh>
+            <boxGeometry />
+            <meshStandardMaterial color={spec.color} transparent opacity={0.8} />
+          </mesh>
+        </group>
+
+        {/* Low Poly: Simple Box for distance */}
+        <mesh scale={[spec.size[0], spec.size[1], spec.size[2]]}>
+          <boxGeometry />
+          <meshStandardMaterial color="#333" />
+        </mesh>
+      </Detailed>
+
+      
+      {/* LED Glow - Updated for Phase 2 */}
+      {isLed && <pointLight color={ledColor} intensity={ledOn ? 3.5 : 0} distance={2.5} position={[0, 0.15, 0]} />}
+      {/* Keep the hover label */}
       {(hovered || selected) && (
         <Html position={[0, spec.size[1] / 2 + 0.15, 0]} center className="pointer-events-none">
           <div className="whitespace-nowrap rounded bg-slate-900/90 px-2 py-1 text-xs text-sky-300">
@@ -72,7 +99,7 @@ function BenchItem({ item }: { item: BenchComponent }) {
           </div>
         </Html>
       )}
-    </mesh>
+    </group>
   );
 }
 
@@ -184,7 +211,11 @@ export default function Workbench() {
       <pointLight position={[-3, 3, -2]} intensity={15} color="#60a5fa" />
 
       <Table />
-      {components.map((c) => <BenchItem key={c.id} item={c} />)}
+      {/* 3. Wrap models in Suspense so they load without crashing */}
+      <Suspense fallback={null}>
+        {components.map((c) => <BenchItem key={c.id} item={c} />)}
+      </Suspense>
+      
       <ContactShadows position={[0, 0.001, 0]} opacity={0.4} scale={8} blur={2} />
 
       <OrbitControls makeDefault target={[0, 0.3, 0]} minDistance={2} maxDistance={9} maxPolarAngle={Math.PI / 2.15} />
