@@ -3,12 +3,29 @@
 import { useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, ContactShadows, PerformanceMonitor, Html } from "@react-three/drei";
-import type { Vector3 } from "three";
-import { useLabStore, type BenchComponent } from "@/store/useLabStore";
-import { SPECS, BOARD_ARCH } from "@/components/bench/specs";
+import { Plane, Raycaster, Vector2, Vector3 } from "three";
+import { useLabStore, type BenchComponent, type ComponentType } from "@/store/useLabStore";
+import { SPECS, BOARD_ARCH, clampToTable } from "@/components/bench/specs";
+import { ComponentModel } from "@/components/bench/models";
 import { setButtonInput } from "@/sim/controller";
 import { setRenderer } from "@/components/bench/glControl";
 import { publishCamera } from "@/lib/rooms";
+
+// ---------- drag state (module level, shared by items and the controller) ----------
+interface DragState {
+  id: string; type: ComponentType;
+  startX: number; startY: number; startPos: [number, number];
+  offset: [number, number] | null; active: boolean; onActivate?: () => void;
+}
+let drag: DragState | null = null;
+let hoverId: string | null = null;
+let orbit: { enabled: boolean } | null = null;
+
+const syncOrbit = () => { if (orbit) orbit.enabled = drag === null && hoverId === null; };
+const canEdit = () => {
+  const s = useLabStore.getState();
+  return !(s.room && !s.room.isHost && s.followHost);
+};
 
 function BenchItem({ item }: { item: BenchComponent }) {
   const spec = SPECS[item.type];
@@ -21,59 +38,133 @@ function BenchItem({ item }: { item: BenchComponent }) {
 
   const isLed = item.type === "led";
   const isButton = item.type === "button";
-  const ledColor = item.color ?? spec.color;
+  const color = item.color ?? spec.color;
   const ledOn = isLed && pinValue !== undefined && (item.activeLow ? pinValue === 0 : pinValue === 1);
   const pressed = isButton && pinValue === 0;
-
-  const emissive = ledOn ? ledColor : selected ? "#38bdf8" : hovered ? "#0ea5e9" : isActiveBoard ? "#1e40af" : "#000000";
-  const emissiveIntensity = ledOn ? 2.5 : selected ? 0.6 : hovered ? 0.3 : isActiveBoard ? 0.25 : 0;
-  const height = pressed ? spec.size[1] * 0.5 : spec.size[1];
+  const [x, z] = clampToTable(item.type, item.position?.[0], item.position?.[2]);
 
   const release = () => {
     if (holding.current && item.pin) setButtonInput(item.pin, false);
     holding.current = false;
   };
 
+  const plateOpacity = selected ? 0.45 : hovered ? 0.25 : isActiveBoard ? 0.18 : 0;
+
   return (
-    <mesh
-      position={[item.position[0], height / 2, item.position[2]]}
-      scale={[1, pressed ? 0.5 : 1, 1]}
-      castShadow
+    <group
+      position={[x, 0, z]}
       onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); select(item.id); }}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-        if (!isButton || !item.pin) return;
+        if (e.nativeEvent.button !== 0) return;
         e.stopPropagation();
-        holding.current = true;
-        setButtonInput(item.pin, true);
+        if (isButton && item.pin) { holding.current = true; setButtonInput(item.pin, true); }
+        if (canEdit()) {
+          drag = {
+            id: item.id, type: item.type,
+            startX: e.nativeEvent.clientX, startY: e.nativeEvent.clientY,
+            startPos: [x, z], offset: null, active: false,
+            onActivate: isButton ? release : undefined,
+          };
+          syncOrbit();
+        }
       }}
       onPointerUp={release}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
-        document.body.style.cursor = "pointer";
+        hoverId = item.id;
+        syncOrbit();
+        if (!drag?.active) document.body.style.cursor = canEdit() ? "grab" : "pointer";
       }}
       onPointerOut={() => {
         setHovered(false);
-        document.body.style.cursor = "auto";
-        release();
+        if (hoverId === item.id) hoverId = null;
+        syncOrbit();
+        if (!drag?.active) { document.body.style.cursor = "auto"; release(); }
       }}
     >
-      <boxGeometry args={spec.size} />
-      <meshStandardMaterial
-        color={isLed ? ledColor : spec.color}
-        emissive={emissive}
-        emissiveIntensity={emissiveIntensity}
-      />
-      {isLed && <pointLight color={ledColor} intensity={ledOn ? 1.5 : 0} distance={0.9} position={[0, 0.15, 0]} />}
+      {/* selection / active-board plate on the table */}
+      {plateOpacity > 0 && (
+        <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[spec.size[0] + 0.1, spec.size[2] + 0.1]} />
+          <meshBasicMaterial color={selected || hovered ? "#38bdf8" : "#1d4ed8"} transparent opacity={plateOpacity} depthWrite={false} />
+        </mesh>
+      )}
+
+      <ComponentModel type={item.type} color={color} on={ledOn} pressed={pressed} />
+
       {(hovered || selected) && (
-        <Html position={[0, spec.size[1] / 2 + 0.15, 0]} center className="pointer-events-none">
+        <Html position={[0, spec.size[1] + 0.15, 0]} center className="pointer-events-none">
           <div className="whitespace-nowrap rounded bg-slate-900/90 px-2 py-1 text-xs text-sky-300">
             {spec.label}{item.pin ? ` · ${item.pin}` : ""}{pressed ? " · pressed" : ""}
           </div>
         </Html>
       )}
-    </mesh>
+    </group>
   );
+}
+
+/** Moves the dragged component across the table plane (y = 0) */
+function DragController() {
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  const controls = useThree((s) => s.controls) as unknown as { enabled: boolean } | null;
+
+  useEffect(() => {
+    orbit = controls;
+    syncOrbit();
+    return () => { orbit = null; };
+  }, [controls]);
+
+  useEffect(() => {
+    const raycaster = new Raycaster();
+    const ndc = new Vector2();
+    const plane = new Plane(new Vector3(0, 1, 0), 0);
+    const hit = new Vector3();
+
+    const planeAt = (cx: number, cy: number): [number, number] | null => {
+      const r = gl.domElement.getBoundingClientRect();
+      ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      return raycaster.ray.intersectPlane(plane, hit) ? [hit.x, hit.z] : null;
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!drag) return;
+      if (!drag.active) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 5) return; // click, not drag
+        const p0 = planeAt(drag.startX, drag.startY);
+        if (!p0) return;
+        drag.offset = [drag.startPos[0] - p0[0], drag.startPos[1] - p0[1]];
+        drag.active = true;
+        drag.onActivate?.();
+        document.body.style.cursor = "grabbing";
+      }
+      const p = planeAt(e.clientX, e.clientY);
+      if (!p || !drag.offset) return;
+      const [x, z] = clampToTable(drag.type, p[0] + drag.offset[0], p[1] + drag.offset[1]);
+      useLabStore.getState().updateComponent(drag.id, { position: [x, 0, z] });
+    };
+
+    const onUp = () => {
+      if (!drag) return;
+      const wasActive = drag.active;
+      drag = null;
+      syncOrbit();
+      if (wasActive) document.body.style.cursor = hoverId ? "grab" : "auto";
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [camera, gl]);
+
+  return null;
 }
 
 function Table() {
@@ -85,7 +176,7 @@ function Table() {
         <meshStandardMaterial color="#3f3f46" roughness={0.8} />
       </mesh>
       {legs.map(([x, z], i) => (
-        <mesh key={i} position={[x, -0.8, z]}>
+        <mesh key={i} position={[x, -0.8, z]} castShadow>
           <boxGeometry args={[0.12, 1.5, 0.12]} />
           <meshStandardMaterial color="#27272a" />
         </mesh>
@@ -110,7 +201,7 @@ function FpsWatchdog() {
     const fps = (frames.current * 1000) / elapsed;
     frames.current = 0;
     windowStart.current = now;
-    if (elapsed > 2000 || document.visibilityState !== "visible") { lowStreak.current = 0; return; } // tab was hidden
+    if (elapsed > 2000 || document.visibilityState !== "visible") { lowStreak.current = 0; return; }
     if (warmup.current > 0) { warmup.current--; return; }
     lowStreak.current = fps < 15 ? lowStreak.current + 1 : 0;
     if (lowStreak.current >= 3) {
@@ -162,11 +253,23 @@ export default function Workbench() {
 
   useEffect(() => () => setRenderer(null), []);
 
+  // Repair any stored positions that are off the table (old drafts, saved projects, bad placement)
+  useEffect(() => {
+    if (!canEdit()) return;
+    const st = useLabStore.getState();
+    for (const c of components) {
+      const [x, z] = clampToTable(c.type, c.position?.[0], c.position?.[2]);
+      if (x !== c.position?.[0] || z !== c.position?.[2] || c.position?.[1] !== 0) {
+        st.updateComponent(c.id, { position: [x, 0, z] });
+      }
+    }
+  }, [components]);
+
   return (
     <Canvas
       shadows
       dpr={dpr}
-      camera={{ position: [0, 3.2, 4.5], fov: 45 }}
+      camera={{ position: [0, 3.4, 4.6], fov: 45 }}
       onPointerMissed={() => select(null)}
       onCreated={({ gl }) => {
         setRenderer(gl);
@@ -179,7 +282,7 @@ export default function Workbench() {
       <PerformanceMonitor onIncline={() => setDpr(2)} onDecline={() => setDpr(1)} />
       <FpsWatchdog />
       <color attach="background" args={["#0b1020"]} />
-      <ambientLight intensity={0.4} />
+      <ambientLight intensity={0.45} />
       <directionalLight position={[4, 6, 3]} intensity={1.3} castShadow shadow-mapSize={[2048, 2048]} />
       <pointLight position={[-3, 3, -2]} intensity={15} color="#60a5fa" />
 
@@ -188,6 +291,7 @@ export default function Workbench() {
       <ContactShadows position={[0, 0.001, 0]} opacity={0.4} scale={8} blur={2} />
 
       <OrbitControls makeDefault target={[0, 0.3, 0]} minDistance={2} maxDistance={9} maxPolarAngle={Math.PI / 2.15} />
+      <DragController />
       <CameraSync />
     </Canvas>
   );
